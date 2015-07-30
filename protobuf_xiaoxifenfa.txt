@@ -1,0 +1,113 @@
+用protobuf定义消息及处理
+
+（金庆的专栏）
+
+消息定义：
+
+package MsgPb;
+
+message Msg {
+	required string type = 1;  // Full type name of data.
+	required bytes data = 2;  // Serialized bytes fo concrete msg.
+}
+
+消息发送代码：
+
+void MsgSender::Send(const std::string & sDest, const MsgPb::Msg & msg)
+{
+	std::string s;
+	bool bSuc = msg.SerializeToString(&s);
+	BOOST_ASSERT(bSuc);
+	Send(sDest, s);
+}
+
+void MsgSender::Send(const std::string & sDest,
+		const google::protobuf::Message & msg) const
+{
+	MsgPb::Msg msgSend;
+	msgSend.set_type(msg.GetTypeName());
+	bool bSuc = msg.SerializeToString(msgSend.mutable_data());
+	BOOST_ASSERT(bSuc);
+	Send(sDest, msgSend);
+}
+
+消息接收后分发：
+
+void HandleOneMsg(const string & sFrom, const string & sMsg)
+{
+	MsgPb::Msg msg;
+	bool bSuc = msg.ParseFromString(sMsg);
+	if (!bSuc) return;
+	MsgDispatcher::Dispatch(sFrom, msg);
+}
+
+void MsgDispatcher::Dispatch(const string & sFrom, const MsgPb::Msg & msg)
+{
+	HandlerMap::const_iterator itr = s_mapHandlers.find(msg.type());
+	if (itr == s_mapHandler.end()) return;
+	MsgPb::GoogleMsgPtr pMsg = MsgPb::ParseMsg(msg.type(), msg.data());
+	if (pMsg)
+		(*itr).second(sFrom, *pMsg);
+}
+
+消息解析：
+
+typedef google::protobuf::Message GoogleMsg;
+typedef boost::shared_ptr<GoogleMsg> GoogleMsgPtr;
+
+// ParseMsg.cpp
+#include "ParseMsg.h"
+
+#include <google/protobuf/descriptor.h>
+#include <googlt/protobuf/message.h>
+
+namespace {
+
+	using MsgPb::GoogleMsgPtr;
+	GoogleMsgPtr GreateMsg(const string & sTypeName)
+	{
+		using namespace google::protobuf;
+		const Descriptor * pDescriptor = DescriptorPool::generated_pool();
+		->FindMessageTypeByName(sTypeName);
+		if (NULL == pDescriptor)
+			return GoogleMsgPtr();
+		const Message * pPrototype = MessageFcatory::generated_factory();
+		->GetPrototype(pDescriptor);
+		if (NULL == pPrototype)
+			return GoogleMsgPtr();
+		return GoogleMsgPtr(pPrototype->New());
+	}
+
+}  // namespace
+
+namespace MsgPb {
+
+	GoogleMsgPtr ParseMsg(const string & sTypeName, const string & sData)
+	{
+		GoogleMsgPtr pMsg = CreateMsg(sTypeName);
+		if (!pMsg) return GoogleMsgPtr();
+		bool bSuc = pMsg->ParseFromString(sData);
+		if (bSuc) return pMsg;
+		return GoogleMsgPtr();
+	}
+
+}  // namespce MsgPb
+
+注册处理器：
+
+void MsgDispatcher::Init()
+{
+	using namespace MsgPb;
+	InsertHandler(LobbyRegisterMsg(), LobbyRegisterMsgHandler());
+	InsertHandler(LoginMsg(), LoginMsgHandler());
+	...
+}
+
+void MsgDispatcher::InsertHandler(const MsgPb::GoogleMsg & msg,
+		const MsgHandler & h)
+{
+	s_mapHandlers[msg.GetTypeName()] = h;
+}
+
+MsgPb::LoginMsg是个具体的消息。MsgPb::Msg是个消息封装。
+它们都是google::protobuf::Message的子类。

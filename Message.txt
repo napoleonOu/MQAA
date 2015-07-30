@@ -1,0 +1,73 @@
+#pragma once
+#include <Message.pb.h>
+#include <memory>
+#include <map>
+#include "Client.h"
+using std::shared_ptr;
+class BaseHandler
+{
+	public:
+		BaseHandler(pbmsg::MSG type):type_(type){
+			Register (this);
+		}
+		virtual ~BaseHandler(){}
+
+		pbmsg::MSG GetType() const { return type_; }
+		//具体处理方法，由派生类实现.
+		virtual void Process( const shared_ptr<pbmsg::Message> & msg, const shared_ptr<Client> & client) = 0;
+
+		//注册消息处理方法
+		static void Register( BaseHandler *);
+		//执行指定的消息,查询处理方法，调用Process。
+		static void Execute( const shared_ptr<pbmsg::Message> & msg, const shared_ptr<Client> & client);
+	private:
+		pbmsg::MSG type_;
+
+
+	private:
+		static std::map<pbmsg::MSG , BaseHandler *> handers;
+};
+// 每个消息都实现Process的一个特化版本...
+template< pbmsg::MSG Type>
+class MessageHandler : public BaseHandler
+{
+	public:
+		MessageHandler(void):BaseHandler(Type){}
+		~MessageHandler(void){}
+
+		void Process( const shared_ptr<pbmsg::Message> & msg, const shared_ptr<Client> & client);
+	private:
+		static MessageHandler thisHandler;
+
+};
+
+///放在.cpp\.cxx文件中.
+
+void BaseHandler::Register( BaseHandler * h )
+{
+	handers[h->GetType ()] = h;
+}
+
+
+void BaseHandler::Execute( const shared_ptr<pbmsg::Message> & msg , ...其它参数)
+{
+	auto it = handers.find(msg->type());
+	if( it != handers.end ())
+	{
+		it->second->Process(msg,client);
+	}else{
+		LOG(ERROR) <<"消息 "<<msg->type()<<" 没有对应的处理方法.\n";;
+	}
+}
+//对每个MSG 枚举的消息值，都会特化一个Process方法。
+template<>
+void MessageHandler<pbmsg::Login_Request>::Process( const shared_ptr<pbmsg::Message> & msg , ...其它参数){}
+//并且在全局空间创建对象，系统启动时，自动创建。如果需要在堆空间中分配，另行封装方法，并调用下面的代码，让编译器实例化类。
+MessageHandler<pbmsg::Login_Request> MessageHandler<pbmsg::Login_Request>::thisHandler;
+// 最后消息处理：非常的easy：shared_ptr<pbmsg::Message> recvMessage( new pbmsg::Message());
+bool parserOk = recvMessage->ParseFromArray((msg.rd_ptr ()+4), msg.size ()-4);
+if( parserOk ){
+
+	BaseHandler::Execute (recvMessage, ...其它参数);
+
+}
